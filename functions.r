@@ -1,3 +1,7 @@
+library(httr)
+library(XML)
+library(xml2)
+
 getUserGroup <- function(userid, base_path = "https://www.goodreads.com/", 
                          key = "DYNDEHgOTor79cS1Z6w") {
   path <- "group/list"
