@@ -1,5 +1,4 @@
 library(ggplot2)
-library(shiny)
 
 # analyze user.book data
 load("userbook")
@@ -27,5 +26,5 @@ topPub$publisher <- factor(as.character(topPub$publisher), levels = as.character
 #   xlab("Publisher") +
 #   theme(axis.text.x=element_text(angle = 45, hjust=1))
 
-runApp(file.path(getwd(),"bpshiny"))
+runApp()
 

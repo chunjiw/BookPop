@@ -1,0 +1,165 @@
+Project BookPop
+
+This project collects book data (publishers, publication time, number of pages, genre etc.)  and predicts/estimates popularity (ratings, reader numbers, average reading time etc.) of a proposed book with its features. This is designed for publishers to make decisions about a new book. As the first step, I use Goodreads API for data acquisition, but in the future I intend to expand to other data source such as Google Books. At this stage, this app is written in R and deployed through shinyapps.io, as shown in one of the hosting site of the plot.
+
+https://www.goodreads.com/api/index
+
+https://github.com/chunjiw/BookPop/blob/master/publisher.png
+https://github.com/chunjiw/BookPop/blob/master/reviewmonth.png
+
+https://www.youtube.com/embed/bIJrnY0okas
+
+
+
+
+
+
+
+
+
+
+library(httr)
+library(XML)
+library(xml2)
+
+getUserGroup <- function(userid, base_path = "https://www.goodreads.com/", 
+                         key = "DYNDEHgOTor79cS1Z6w") {
+  path <- "group/list"
+  groupids <- numeric(0)
+  for (id in userid) {
+    query = list(id = id, key = key)
+    res <- httr::GET(base_path, path = path, query = query )
+    con <- content(res, as = "text")
+    conp <- xmlParse(con)
+    d <- xmlToDataFrame(conp)
+    groups <- str_extract_all(d$list[2], "group/show/[0-9]+")
+    gids <- as.numeric(str_extract_all(groups, "[0-9]+", simplify = TRUE))
+    groupids <- c(groupids, gids) 
+  }
+  groupids
+}
+
+getGroupUser <- function(groupid, base_path = "https://www.goodreads.com/", 
+                         key = "DYNDEHgOTor79cS1Z6w") {
+  path <- "group/members"
+  userids <- numeric(0)
+  for (id in groupid) {
+    query = list(id = id, key = key)
+    # res <- httr::GET(base_path, path = path, query = query)
+    res <- httr::GET(paste(base_path, path, sprintf("/%i.xml?key=%s", id, key), sep=""))
+    if (httr::http_status(res)$category != "Success"){
+      print (paste0(httr::http_status(res)$reason," ",httr::http_status(res)$message))
+      next()
+    }
+    con <- content(res, as = "parsed")
+    conp <- xmlParse(con, encoding = "UTF-8")
+    gu <- getNodeSet(conp, "//group_user")
+    d <- xmlToDataFrame(gu)
+    userids <- c(userids, as.numeric(str_extract(d$user, "[0-9]+")))
+  }
+  userids
+}
+
+getUserBook <- function(userid, base_path = "https://www.goodreads.com/", 
+                        key = "DYNDEHgOTor79cS1Z6w") {
+  path <- "user/show"
+  userids <- numeric(0)
+  bookids <- numeric(0)
+  authorids <- numeric(0)
+  pubyear <- numeric(0)
+  pubmonth <- numeric(0)
+  pubday <- numeric(0)
+  numpages <- numeric(0)
+  publisher <- character(0)
+  lang <- character(0)
+  reviews_count <- numeric(0)
+  
+  for (id in userid) {
+    query = list(id = id, key = key)
+    res <- httr::GET(base_path, path = path, query = query)
+    con <- content(res, as = "parsed")
+    conp <- xmlParse(con, encoding = "UTF-8")
+    bo <- getNodeSet(conp, "//book")
+    d <- xmlToDataFrame(bo)
+    idx <- !duplicated(d$id)
+    userids <- c(userids, rep(id, times = sum(idx)))
+    bookids <- c(bookids, as.numeric(as.character(d$id))[idx])
+    authorids <- c(authorids, as.numeric(as.character(d$author_id))[idx])
+    pubyear <- c(pubyear, as.numeric(as.character(d$publication_year))[idx])
+    pubmonth <- c(pubmonth, as.numeric(as.character(d$publication_month))[idx])
+    pubday <- c(pubday, as.numeric(as.character(d$publication_day))[idx])
+    numpages <- c(numpages, as.numeric(as.character(d$num_pages))[idx])
+    publisher <- c(publisher, as.character(d$publisher)[idx])
+    lang <- c(lang, as.character(d$language_code)[idx])
+    reviews_count <- c(reviews_count, as.numeric(as.character(d$reviews_count))[idx])
+  }
+  data.frame(userid = userids, bookid = bookids,
+             authorids = authorids,
+             pubyear = pubyear,
+             pubmonth = pubmonth,
+             pubday = pubday,
+             numpages = numpages,
+             publisher = publisher,
+             language = lang,
+             reviews_count = reviews_count)
+}
+
+# sample more than maxUser users
+
+userid <- 45921938
+userpool <- numeric(0)
+maxUser <- 100000
+while (length(userid) < maxUser) {
+  try( {
+    id <- userid[sample(length(userid), 1)]
+    if (id %in% userpool) {
+      next()
+    }
+    userpool <- c(userpool, id)
+    groupid <- unique(getUserGroup(id))
+    userid <- unique(c(userid, getGroupUser(groupid)))
+    print(length(userid))
+  }, silent = TRUE)
+}
+save(userid, file = "userid")
+
+
+# sample books of users
+
+
+for (id in userid[-100:-1]) {
+  user.book <- rbind(user.book, getUserBook(id))
+  print(nrow(user.book))
+}
+
+save(user.book, file="userbook0")
+
+
+library(ggplot2)
+
+# analyze user.book data
+load("userbook0")
+
+# review counts by year/month/day
+rc <- aggregate(user.book["reviews_count"], by=list(month = user.book$pubmonth), FUN=sum)
+nb <- aggregate(user.book["bookid"], by=list(month = user.book$pubmonth), function(x) {length(unique(x))})
+review.month <- merge(rc, nb)
+colnames(review.month)[3] <- "numbooks"
+review.month$month <- as.factor(review.month$month)
+review.month$reviews_per_book <- review.month$reviews_count / review.month$numbooks
+ggplot(review.month, aes(x = month, y = reviews_per_book)) +
+  geom_bar(stat = "identity")
+
+# fraction of users engaged by publisher
+user.publisher <- aggregate(user.book["userid"], by=list(publisher = user.book$publisher), function(x) {length(unique(x))})
+colnames(user.publisher)[2] <- "numusers"
+user.publisher$fracuser <- user.publisher$numusers/ length(unique(user.book$userid)) * 100
+user.publisher <- user.publisher[order(-user.publisher$numusers),]
+topPub <- user.publisher[2:13,]
+topPub$publisher <- factor(as.character(topPub$publisher), levels = as.character(topPub$publisher))
+ggplot(topPub, aes(x = publisher, y = fracuser)) +
+  geom_bar(stat = "identity") +
+  ylab("User Engaged %") +
+  xlab("Publisher") +
+  theme(axis.text.x=element_text(angle = 45, hjust=1))
+
